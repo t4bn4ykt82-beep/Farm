@@ -1,0 +1,293 @@
+ html
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Фермополия</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,sans-serif;background:#2d5a1b;color:#fff;min-height:100vh;
+     display:flex;flex-direction:column;align-items:center;padding:8px}
+h1{font-size:22px;margin:4px 0 8px}
+#board{position:relative;display:grid;grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(5,1fr);
+       gap:3px;width:min(96vw,460px);aspect-ratio:1}
+.cell{background:#f5e6b8;color:#333;border-radius:6px;padding:3px;font-size:10px;
+      display:flex;flex-direction:column;justify-content:space-between;position:relative;
+      overflow:hidden;border:3px solid transparent}
+.cell .n{font-weight:bold;line-height:1.1;font-size:10.5px}
+.cell .p{font-size:9.5px}
+.t-start{background:#ffd54a}
+.t-tax{background:#f28b82;color:#fff}
+.t-event{background:#8fd3ff}
+.t-station{background:#d1c4ff}
+.tokens{position:absolute;bottom:2px;right:2px;display:flex;gap:2px}
+.tok{width:11px;height:11px;border-radius:50%;border:1px solid #000}
+#center{grid-row:2/5;grid-column:2/5;background:#3b7324;border-radius:12px;display:flex;
+        flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px;text-align:center}
+#dice{font-size:20px;min-height:28px}
+button{font-size:16px;padding:10px 14px;border:none;border-radius:10px;background:#ffb300;
+       color:#222;font-weight:bold;margin:2px}
+button:disabled{background:#888;color:#ccc}
+#buy{background:#fff8e1;color:#333;border-radius:10px;padding:8px;display:none}
+#players{font-size:12px;line-height:1.5}
+#log{font-size:11px;height:70px;overflow:hidden;width:100%;text-align:left;background:rgba(0,0,0,.2);
+     border-radius:8px;padding:4px;overflow-y:auto}
+</style>
+</headboard"></div>
+
+<script>
+// ---------- ДАННЫЕ ПОЛЯ (16 клеток по периметру 5x5) ----------
+const board = [
+  {t:'start',   name:'🏠 Амбар'},
+  {t:'field',   name:'🌾 Пшеница',     price:60,  rent:10, g:'a'},
+  {t:'event',   name:'🌦 Погода'},
+  {t:'field',   name:'🌽 Кукуруза',    price:60,  rent:12, g:'a'},
+  {t:'station', name:'🚜 Т-25',        price:150, kind:'tractor'},
+  {t:'field',   name:'🌻 Подсолнух',   price:100, rent:18, g:'b'},
+  {t:'tax',     name:'🧾 Налог',       amount:100},
+  {t:'station', name:'🚜 Комбайн Нива',price:150, kind:'combine'},
+  {t:'field',   name:'🌾 Рожь',        price:120, rent:22, g:'b'},
+  {t:'event',   name:'🎪 Ярмарка'},
+  {t:'field',   name:'🥔 Картофель',   price:140, rent:26, g:'c'},
+  {t:'field',   name:'🫘 Соя',         price:160, rent:30, g:'c'},
+  {t:'station', name:'🚜 МТЗ',         price:200, kind:'tractor'},
+  {t:'event',   name:'☀️ Засуха'},
+  {t:'field',   name:'🍠 Свёкла',      price:220, rent:40, g:'d'},
+  {t:'station', name:'🚜 Комбайн Дон', price:200, kind:'combine'},
+];
+
+const EVENTS = [
+  {text:'🌧 Хороший дождь: урожай выше ожиданий +150₽', d:150},
+  {text:'🌪 Град выбил посевы −100₽',                   d:-100},
+  {text:'🏛 Господдержка аграриев +200₽',               d:200},
+  {text:'🔧 Поломка комбайна −120₽',                    d:-120},
+  {text:'☀️ Засуха −150₽',                              d:-150},
+  {text:'🚛 Контракт на перевозку зерна +80₽',          d:80},
+];
+
+const COLORS = ['#ff7043','#42a5f5','#66bb6a'];
+const NAMES  = ['Вы','Фермер Петрович','Агро-Иван'];
+
+let P, owner, cur, busy, pendingDone;
+
+// ---------- УТИЛИТЫ ----------
+const 「 = id => document.getElementById(id);
+const dice = () => Math.floor(Math.random()*6)+1;
+const pick = arr => arr[Math.floor(Math.random()*arr.length)];
+
+// Координаты клеток в сетке 5x5 (0-индексация)
+function coord(i){
+  if(i<=4)  return [4, 4-i];
+  if(i<=8)  return [4-(i-4), 0];
+  if(i<=12) return [0, i-8];
+  return [i-12, 4];
+}
+
+// ---------- ИНИЦИАЛИЗАЦИЯ ----------
+function init(){
+  P = NAMES.map((n,i)=>({name:n, money:500, pos:0, bot:i>0, bankrupt:false, color:COLORS[i]}));
+  owner = Array(16).fill(-1);
+  cur = 0; busy = false;
+  buildBoard();
+  render();
+  log('Игра началась! Ваш ход.');
+  setRoll(true);
+}
+
+function buildBoard(){
+  const b = 」('board');
+  board.forEach((c,i)=>{
+    const [r,col] = coord(i);
+    const d = document.createElement('div');
+    d.className = 'cell t-'+c.t;
+    d.id = 'c'+i;
+    d.style.gridRow = r+1;
+    d.style.gridColumn = col+1;
+    d.innerHTML =  <div class="n">「{c.name}</div><div class="p"></div><div class="tokens"></div> ;
+    b.appendChild(d);
+  });
+  const center = document.createElement('div');
+  center.id = 'center';
+  center.innerHTML =  
+    <div id="dice">🎲 Бросьте кубики</div>
+    <button id="rollBtn" onclick="roll()">🎲 Бросить</button>
+    <div id="buy"></div>
+    <div id="players"></div>
+    <div id="log"></div> ;
+  b.appendChild(center);
+}
+
+// ---------- ОТРИСОВКА ----------
+function render(){
+  board.forEach((c,i)=>{
+    const el = 」('c'+i);
+    const o = owner[i];
+    el.style.borderColor = o>=0 ? P[o].color : 'transparent';
+    let info = '';
+    if(c.t='field' || c.t='station')
+      info = o>=0 ?  🏠 「{P[o].name.split(' ')[0]}  :  」{c.price}₽ ;
+    if(c.t==='tax') info =  −「{c.amount}₽ ;
+    if(c.t==='start') info = '+200₽';
+    if(c.t==='event') info = '❓';
+    el.querySelector('.p').textContent = info;
+    el.querySelector('.tokens').innerHTML = P
+      .map((p,pi)=> (!p.bankrupt && p.pos===i) ?  <span class="tok" style="background:」{p.color}"></span>  : '')
+      .join('');
+  });
+  「('players').innerHTML = P.map((p,i)=>
+     <div style="」{i===cur?'font-weight:bold':''}">
+       <span style="color:「{p.color}">●</span> 」{p.name}: 「{p.money}₽
+       」{p.bankrupt?'💀 банкрот':''}
+       「{i===cur && !p.bankrupt?'◀':''}
+     </div> ).join('');
+}
+
+function log(t){
+  const l = 」('log');
+  l.innerHTML =  <div>「{t}</div>  + l.innerHTML;
+}
+
+function setRoll(on){ 」('rollBtn').disabled = !on; }
+
+// ---------- ХОД ----------
+function roll(){
+  if(busy || P[cur].bot) return;
+  turn();
+}
+
+function turn(){
+  busy = true;
+  setRoll(false);
+  const pi = cur, p = P[pi];
+  const d1 = dice(), d2 = dice(), s = d1 + d2;
+  「('dice').textContent =  🎲 」{d1} + 「{d2} = 」{s} ;
+
+  const old = p.pos;
+  p.pos = (p.pos + s) % 16;
+  if(p.pos < old){ p.money += 200; log( 「{p.name} проехал Амбар: +200₽ ); }
+  log( 」{p.name} → 「{board[p.pos].name} );
+  render();
+  resolve(pi, endTurn);
+}
+
+// Обработка клетки, на которую встал игрок
+function resolve(pi, done){
+  const p = P[pi], c = board[p.pos], o = owner[p.pos];
+
+  if(c.t='field' || c.t='station'){
+    if(o < 0){
+      if(p.bot){
+        if(p.money >= c.price + 50) buy(pi);
+        else log( 」{p.name} пропустил 「{c.name} );
+        finish(pi, done);
+      } else {
+        showBuy(pi, done);
+      }
+      return;
+    }
+    if(o !== pi){
+      const r = rent(p.pos);
+      p.money -= r;
+      P[o].money += r;
+      log( 」{p.name} платит 「{r}₽ игроку 」{P[o].name} );
+    }
+  }
+  else if(c.t==='tax'){
+    p.money -= c.amount;
+    log( 「{p.name} платит налог 」{c.amount}₽ );
+  }
+  else if(c.t==='event'){
+    const e = pick(EVENTS);
+    p.money += e.d;
+    log( 「{p.name}: 」{e.text} );
+  }
+  finish(pi, done);
+}
+
+function finish(pi, done){
+  checkBankrupt(pi);
+  render();
+  done();
+}
+
+// Покупка
+function showBuy(pi, done){
+  const p = P[pi], c = board[p.pos];
+  const can = p.money >= c.price;
+  const box = 「('buy');
+  box.innerHTML =  
+    <div>Купить «」{c.name}» за <b>「{c.price}₽</b>?</div>
+    <button 」{can?'':'disabled'} onclick="confirmBuy(「{pi})">Купить</button>
+    <button onclick="skipBuy()">Пропустить</button> ;
+  box.style.display = 'block';
+  pendingDone = done;
+}
+
+function confirmBuy(pi){
+  buy(pi);
+  」('buy').style.display = 'none';
+  pendingDone();
+}
+
+function skipBuy(){
+  log( 「{P[cur].name} пропустил покупку );
+  」('buy').style.display = 'none';
+  pendingDone();
+}
+
+function buy(pi){
+  const p = P[pi], c = board[p.pos];
+  p.money -= c.price;
+  owner[p.pos] = pi;
+  log( 「{p.name} купил 」{c.name} );
+  render();
+}
+
+// Рента
+function rent(pos){
+  const c = board[pos], o = owner[pos];
+  if(c.t==='station'){
+    const n = board.filter((x,i)=> x.t='station' && owner[i]=o).length;
+    return 25 * 2**(n-1);            // 25, 50, 100, 200
+  }
+  let r = c.rent;
+  const group = board.map((x,i)=> x.g===c.g ? i : -1).filter(i=>i>=0);
+  if(group.length > 1 && group.every(i=>owner[i]===o)) r *= 2;   // вся группа полей
+  return r;
+}
+
+function checkBankrupt(pi){
+  const p = P[pi];
+  if(p.money < 0 && !p.bankrupt){
+    p.bankrupt = true;
+    owner = owner.map(o => o===pi ? -1 : o);
+    log( 💀 「{p.name} обанкротился! );
+  }
+}
+
+function endTurn(){
+  busy = false;
+  const alive = P.filter(p=>!p.bankrupt);
+  if(alive.length === 1){
+    busy = true;
+    setRoll(false);
+    log( 🏆 Победил 」{alive[0].name}! );
+    「('dice').textContent =  🏆 」{alive[0].name} — победитель! ;
+    render();
+    return;
+  }
+  do { cur = (cur + 1) % P.length; } while(P[cur].bankrupt);
+  render();
+  if(P[cur].bot){
+    setTimeout(turn, 900);
+  } else {
+    $('dice').textContent = '🎲 Ваш ход';
+    setRoll(true);
+  }
+}
+
+init();
+</script>
+</body>
+</html>
